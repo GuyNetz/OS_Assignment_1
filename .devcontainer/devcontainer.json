@@ -16,7 +16,8 @@
 	"extensions": [
 		"ms-vscode.cpptools-themes",
 		"ms-vscode.cpptools",
-		"vscode-icons-team.vscode-icons"
+		"vscode-icons-team.vscode-icons",
+		"ms-vsliveshare.vsliveshare"
 	],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
