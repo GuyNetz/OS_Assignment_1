@@ -37,3 +37,4 @@ entry("sbrk");
 entry("sleep");
 entry("uptime");
 entry("memsize");       #added new entry
+entry("co_yield");

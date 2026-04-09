@@ -6,6 +6,9 @@
 #include "spinlock.h"
 #include "proc.h"
 
+extern struct proc proc[NPROC];
+extern struct spinlock wait_lock;
+
 uint64
 sys_exit(void)
 {
@@ -96,4 +99,66 @@ sys_memsize(void)
 {
   struct proc *p = myproc();
   return p->sz;
+}
+
+
+uint64
+sys_co_yield(void)
+{
+  int pid;
+  int value;
+
+  argint(0, &pid);
+  argint(1, &value);
+
+  struct proc *currProc = myproc();
+
+  if(pid <= 0 || pid == currProc->pid){
+    return -1;
+  }
+
+  // Scan the process table to find the target by PID
+  struct proc *target = 0;
+  struct proc *pp;    //temporary pointer
+  for(pp = proc; pp < &proc[NPROC]; pp++){
+    acquire(&pp->lock);
+    if(pp->pid == pid && pp->state != UNUSED && pp->state != ZOMBIE){
+      target = pp;
+      release(&pp->lock);
+      break;
+    }
+    release(&pp->lock);
+  }
+
+  // Target not found or not in a usable state
+  if(target == 0)
+    return -1;
+
+  // Target was killed
+  if(killed(target))
+    return -1;
+
+  // Store our outgoing value and target info in the trapframe.
+  // We already read the arguments, so a0 and a1 are free to reuse.
+  currProc->trapframe->a0 = value;   // the value we want to send
+  currProc->trapframe->a1 = pid;     // who we are targeting
+
+  acquire(&wait_lock);
+
+  // TODO: step 30 will go here -- check if target is already waiting for us
+
+  // Target is not ready yet. Sleep until the target yields to us.
+  sleep(&currProc->pid, &wait_lock);
+
+  // We woke up. Someone wrote a value into our trapframe->a0.
+  // But first check: were we woken because we got killed?
+  if(killed(currProc)){
+    release(&wait_lock);
+    return -1;
+  }
+
+  release(&wait_lock);
+
+  // Return the value that our partner delivered to us
+  return currProc->trapframe->a0;
 }
