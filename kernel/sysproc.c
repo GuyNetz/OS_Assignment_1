@@ -105,60 +105,79 @@ sys_memsize(void)
 uint64
 sys_co_yield(void)
 {
+  // Local variables
   int pid;
   int value;
+  struct proc *p;
+  struct proc *cur = myproc();
 
+  // Getting Variables from the userspace (from the Trapframe)
   argint(0, &pid);
   argint(1, &value);
 
-  struct proc *currProc = myproc();
-
-  if(pid <= 0 || pid == currProc->pid){
+  // Check for errors: pid illegal, value illegal, or self co_yielding
+  if(pid <= 0 || value <= 0 || pid == cur->pid){
     return -1;
   }
 
-  // Scan the process table to find the target by PID
-  struct proc *target = 0;
-  struct proc *pp;    //temporary pointer
-  for(pp = proc; pp < &proc[NPROC]; pp++){
-    acquire(&pp->lock);
-    if(pp->pid == pid && pp->state != UNUSED && pp->state != ZOMBIE){
-      target = pp;
-      release(&pp->lock);
-      break;
+  acquire(&wait_lock);  // A lock to synchronize the sleep/wakeup protocol between the processes
+
+  for(;;){
+    struct proc *target = 0;
+
+    // Make sure our current process wasnt killed
+    if(cur->killed){
+      release(&wait_lock);
+      return -1;
     }
-    release(&pp->lock);
+
+    // Find the target process from the processes table
+    for(p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->pid == pid && p->state != UNUSED && p->state != ZOMBIE){
+        target = p;
+        break;
+      }
+      release(&p->lock);
+    }
+
+    // Check for error: target process wasnt found
+    if(target == 0){
+      release(&wait_lock);
+      return -1;
+    }
+    // Check for error: target process is killed
+    if(target->killed){
+      release(&target->lock);
+      release(&wait_lock);
+      return -1;
+    }
+
+    // A matching coroutine call is already waiting for us. Consume the
+    // value it stored in a1, publish our value as its return value in a0,
+    // and let the normal scheduler run it later.
+    if(target->state == SLEEPING && target->chan == cur){
+      int received = target->trapframe->a1;
+      target->trapframe->a0 = value;
+      target->state = RUNNABLE;
+      release(&target->lock);
+      release(&wait_lock);
+      return received;
+    }
+
+    // No partner is waiting yet. Remember our outgoing value and sleep on
+    // the target's address until that target yields back to us.
+    cur->trapframe->a0 = -1;
+    cur->trapframe->a1 = value;
+    release(&target->lock);
+    sleep(target, &wait_lock);
+
+    // If we were woken by a successful handoff, a0 now contains the value
+    // provided by the partner. If the target died, a0 is still -1.
+    if(cur->trapframe->a0 >= 0 || cur->killed){
+      int received = cur->trapframe->a0;
+      release(&wait_lock);
+      return received;
+    }
   }
-
-  // Target not found or not in a usable state
-  if(target == 0)
-    return -1;
-
-  // Target was killed
-  if(killed(target))
-    return -1;
-
-  // Store our outgoing value and target info in the trapframe.
-  // We already read the arguments, so a0 and a1 are free to reuse.
-  currProc->trapframe->a0 = value;   // the value we want to send
-  currProc->trapframe->a1 = pid;     // who we are targeting
-
-  acquire(&wait_lock);
-
-  // TODO: step 30 will go here -- check if target is already waiting for us
-
-  // Target is not ready yet. Sleep until the target yields to us.
-  sleep(&currProc->pid, &wait_lock);
-
-  // We woke up. Someone wrote a value into our trapframe->a0.
-  // But first check: were we woken because we got killed?
-  if(killed(currProc)){
-    release(&wait_lock);
-    return -1;
-  }
-
-  release(&wait_lock);
-
-  // Return the value that our partner delivered to us
-  return currProc->trapframe->a0;
 }

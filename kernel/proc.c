@@ -372,6 +372,8 @@ exit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
+  // Wake any coroutine partner sleeping in co_yield() for this process.
+  wakeup(p);
   
   acquire(&p->lock);
 
@@ -596,6 +598,8 @@ kill(int pid)
         p->state = RUNNABLE;
       }
       release(&p->lock);
+      // Wake any process blocked in co_yield() waiting for this target.
+      wakeup(p);
       return 0;
     }
     release(&p->lock);
