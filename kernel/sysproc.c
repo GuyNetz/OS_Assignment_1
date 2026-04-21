@@ -105,79 +105,89 @@ sys_memsize(void)
 uint64
 sys_co_yield(void)
 {
-  // Local variables
   int pid;
   int value;
-  struct proc *p;
   struct proc *cur = myproc();
+  struct proc *target = 0;
+  struct proc *p;
 
   // Getting Variables from the userspace (from the Trapframe)
   argint(0, &pid);
   argint(1, &value);
 
-  // Check for errors: pid illegal, value illegal, or self co_yielding
+  // Check for input errors: pid illegal, value illegal, or self co_yielding
   if(pid <= 0 || value <= 0 || pid == cur->pid){
     return -1;
   }
 
-  acquire(&wait_lock);  // A lock to synchronize the sleep/wakeup protocol between the processes
+  acquire(&wait_lock);
 
-  for(;;){
-    struct proc *target = 0;
+/******************************** finding target process*********************************/
+  // Make sure our current process wasnt killed
+  if(cur->killed){
+    release(&wait_lock);
+    return -1;
+  }
 
-    // Make sure our current process wasnt killed
-    if(cur->killed){
-      release(&wait_lock);
-      return -1;
-    }
-
-    // Find the target process from the processes table
-    for(p = proc; p < &proc[NPROC]; p++){
-      acquire(&p->lock);
-      if(p->pid == pid && p->state != UNUSED && p->state != ZOMBIE){
-        target = p;
-        break;
-      }
-      release(&p->lock);
-    }
-
-    // Check for error: target process wasnt found
-    if(target == 0){
-      release(&wait_lock);
-      return -1;
-    }
-    // Check for error: target process is killed
-    if(target->killed){
-      release(&target->lock);
-      release(&wait_lock);
-      return -1;
-    }
-
-    // A matching coroutine call is already waiting for us. Consume the
-    // value it stored in a1, publish our value as its return value in a0,
-    // and let the normal scheduler run it later.
-    if(target->state == SLEEPING && target->chan == cur){
-      int received = target->trapframe->a1;
-      target->trapframe->a0 = value;
-      target->state = RUNNABLE;
-      release(&target->lock);
-      release(&wait_lock);
-      return received;
-    }
-
-    // No partner is waiting yet. Remember our outgoing value and sleep on
-    // the target's address until that target yields back to us.
-    cur->trapframe->a0 = -1;
-    cur->trapframe->a1 = value;
-    release(&target->lock);
-    sleep(target, &wait_lock);
-
-    // If we were woken by a successful handoff, a0 now contains the value
-    // provided by the partner. If the target died, a0 is still -1.
-    if(cur->trapframe->a0 >= 0 || cur->killed){
-      int received = cur->trapframe->a0;
-      release(&wait_lock);
-      return received;
+  // Find the target process from the processes table
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->pid == pid && p->state != UNUSED && p->state != ZOMBIE){
+      target = p;
+      break;
     }
   }
+
+  // Check for error: target process wasnt found or is killed
+  if(target == 0 || target->killed){
+    release(&wait_lock);
+    return -1;
+  }
+
+  if(target->state == SLEEPING && target->chan == cur){
+    // The target is waiting for us, perform direct control transfer and skip the scheduler!
+
+    acquire(&target->lock);         // Lock the target process - must hold its lock before switching to it
+    target->trapframe->a0 = value;  // Pass the value directly to its return register
+    cur->state = SLEEPING;          // Current process goes to sleep
+    cur->chan = target;             // Put the target address as our current sleep channel
+    target->state = RUNNING;        // Set target to running (skipping RUNNABLE)
+    mycpu()->proc = target;         // Update the CPU pointer
+
+    release(&wait_lock);            // Release wait_lock as coordination is complete
+
+    // Performing the context switch directly
+    swtch(&cur->context, &target->context);
+
+    // After we woke up:
+    // We woke up because another process performed a swtch back to us.
+    // The protocol dictates that whoever jumped to us holds cur->lock for us, so we must release it.
+    cur->chan = 0;
+    release(&cur->lock);
+
+  } else {
+    // The target is not ready yet. Go to sleep and wait for someone to perform a direct handoff to us.
+    cur->state = SLEEPING;
+    cur->chan = target;
+
+    // To transition to the scheduler properly, we must hold our own process lock
+    acquire(&cur->lock);
+    release(&wait_lock);
+
+    // Jump to the scheduler (it will ignore us because we are SLEEPING, not RUNNABLE)
+    swtch(&cur->context, &mycpu()->context);
+
+    // After we woke up:
+    // We reach here only when the target process performs a Direct Handoff to us.
+    // Again, the protocol dictates that the other process locked cur->lock for us before the swtch.
+    cur->chan = 0;
+    release(&cur->lock);
+  }
+
+  // After waking up - ensure we weren't killed while sleeping
+  if(cur->killed) {
+    return -1;
+  }
+
+  // Return the value placed in a0 for us by the process that yielded to us
+  return cur->trapframe->a0;
 }

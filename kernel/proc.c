@@ -466,9 +466,21 @@ scheduler(void)
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+        
+        // Change: We find which process actually gave us back control
+        // (the current process on the CPU before we reset)
+        struct proc *yielded_p = c->proc;
         c->proc = 0;
+        
+        // We will release the lock of the specific process that returned to the scheduler
+        release(&yielded_p->lock);
+        // ----------------------------------------------------
+
+      } else {
+        // If the process was not RUNNABLE and we did not jump to it,
+        // we will release its lock as usual.
+        release(&p->lock);
       }
-      release(&p->lock);
     }
   }
 }
