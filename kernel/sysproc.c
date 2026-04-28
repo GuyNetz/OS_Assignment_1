@@ -115,8 +115,8 @@ sys_co_yield(void)
   argint(0, &pid);
   argint(1, &value);
 
-  // Check for input errors: pid illegal, value illegal, or self co_yielding
-  if(pid <= 0 || value <= 0 || pid == cur->pid){
+  // Check for input errors: pid illegal or self co_yielding
+  if(pid <= 0 || pid == cur->pid){
     return -1;
   }
 
@@ -143,6 +143,7 @@ sys_co_yield(void)
     return -1;
   }
 
+  // TODO: Reorder locks acquire and release (?)
   if(target->state == SLEEPING && target->chan == cur){
     // The target is waiting for us, perform direct control transfer and skip the scheduler!
 
@@ -152,7 +153,6 @@ sys_co_yield(void)
     cur->chan = target;             // Put the target address as our current sleep channel
     target->state = RUNNING;        // Set target to running (skipping RUNNABLE)
     mycpu()->proc = target;         // Update the CPU pointer
-
     release(&wait_lock);            // Release wait_lock as coordination is complete
 
     // Performing the context switch directly
@@ -165,12 +165,13 @@ sys_co_yield(void)
     release(&cur->lock);
 
   } else {
+    // To transition to the scheduler properly, we must hold our own process lock
+    acquire(&cur->lock);
+
     // The target is not ready yet. Go to sleep and wait for someone to perform a direct handoff to us.
     cur->state = SLEEPING;
     cur->chan = target;
 
-    // To transition to the scheduler properly, we must hold our own process lock
-    acquire(&cur->lock);
     release(&wait_lock);
 
     // Jump to the scheduler (it will ignore us because we are SLEEPING, not RUNNABLE)
