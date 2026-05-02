@@ -122,7 +122,6 @@ sys_co_yield(void)
 
   acquire(&wait_lock);
 
-/******************************** finding target process*********************************/
   // Make sure our current process wasnt killed
   if(cur->killed){
     release(&wait_lock);
@@ -143,7 +142,6 @@ sys_co_yield(void)
     return -1;
   }
 
-  // TODO: Reorder locks acquire and release (?)
   if(target->state == SLEEPING && target->chan == cur){
     // The target is waiting for us, perform direct control transfer and skip the scheduler!
 

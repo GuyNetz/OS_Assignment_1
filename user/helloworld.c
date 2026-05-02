@@ -1,6 +1,10 @@
-#include <stdio.h>
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
 
-int main(){
-    printf("Hello World xv6");
-    return 0;
+int
+main(void)
+{
+  printf("Hello World xv6\n");
+  exit(0);
 }
