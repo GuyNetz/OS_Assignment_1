@@ -115,14 +115,14 @@ sys_co_yield(void)
   argint(0, &pid);
   argint(1, &value);
 
-  // Check for input errors: pid illegal, value illegal, or self co_yielding
-  if(pid <= 0 || value <= 0 || pid == cur->pid){
+  // Check for input errors: pid illegal, self co_yielding, or non-positive value
+  // (spec assumes value is always positive, rejecting invalid input defensively)
+  if(pid <= 0 || pid == cur->pid || value <= 0){
     return -1;
   }
 
   acquire(&wait_lock);
 
-/******************************** finding target process*********************************/
   // Make sure our current process wasnt killed
   if(cur->killed){
     release(&wait_lock);
@@ -152,7 +152,6 @@ sys_co_yield(void)
     cur->chan = target;             // Put the target address as our current sleep channel
     target->state = RUNNING;        // Set target to running (skipping RUNNABLE)
     mycpu()->proc = target;         // Update the CPU pointer
-
     release(&wait_lock);            // Release wait_lock as coordination is complete
 
     // Performing the context switch directly
@@ -165,12 +164,13 @@ sys_co_yield(void)
     release(&cur->lock);
 
   } else {
+    // To transition to the scheduler properly, we must hold our own process lock
+    acquire(&cur->lock);
+
     // The target is not ready yet. Go to sleep and wait for someone to perform a direct handoff to us.
     cur->state = SLEEPING;
     cur->chan = target;
 
-    // To transition to the scheduler properly, we must hold our own process lock
-    acquire(&cur->lock);
     release(&wait_lock);
 
     // Jump to the scheduler (it will ignore us because we are SLEEPING, not RUNNABLE)

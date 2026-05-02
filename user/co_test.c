@@ -47,6 +47,24 @@ test_killed_target(void)
   wait(0);
 }
 
+static void
+test_negative_pid(void)
+{
+  int received = co_yield(-1, 1);
+  printf("negative pid: %d\n", received);
+  if(received != -1)
+    exit(1);
+}
+
+static void
+test_zero_pid(void)
+{
+  int received = co_yield(0, 1);
+  printf("zero pid: %d\n", received);
+  if(received != -1)
+    exit(1);
+}
+
 /* Verifies that a process correctly sleeps and waits when the target process has not yet yielded control back. */
 // static void 
 // test_target_not_ready() 
@@ -154,6 +172,8 @@ test_from_assignment(void)
 int
 main(void)
 {
+  test_negative_pid();
+  test_zero_pid();
   test_bad_pid();
   test_self_yield();
   test_killed_target();
