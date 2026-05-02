@@ -115,8 +115,9 @@ sys_co_yield(void)
   argint(0, &pid);
   argint(1, &value);
 
-  // Check for input errors: pid illegal or self co_yielding
-  if(pid <= 0 || pid == cur->pid){
+  // Check for input errors: pid illegal, self co_yielding, or non-positive value
+  // (spec assumes value is always positive, rejecting invalid input defensively)
+  if(pid <= 0 || pid == cur->pid || value <= 0){
     return -1;
   }
 
